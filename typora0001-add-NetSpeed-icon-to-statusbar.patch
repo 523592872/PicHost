@@ -1,0 +1,1399 @@
+From fcd2b0f15419647e7ad4336d8d6016a6f3519c42 Mon Sep 17 00:00:00 2001
+From: zhoupeng <anr@windone.group>
+Date: Fri, 2 Aug 2024 19:22:14 +0800
+Subject: [PATCH] add NetSpeed icon to statusbar
+
+---
+ .../status_bar_network_speed_group_inner.xml  |  38 ++
+ .../layout/status_bar_network_speed_group.xml |  29 ++
+ .../packages/SystemUI/res/values/dimens.xml   |   1 +
+ .../phone/StatusBarIconController.java        |  45 +++
+ .../phone/StatusBarIconControllerImpl.java    |  19 +
+ .../statusbar/phone/StatusBarIconHolder.java  |  29 +-
+ .../phone/StatusBarSignalPolicy.java          |  88 ++++-
+ .../pipeline/StatusBarPipelineFlags.kt        |   6 +
+ .../statusbar/speed/NetConnectManager.kt      | 199 +++++++++++
+ .../statusbar/speed/NetworkSpeedView.java     | 286 +++++++++++++++
+ .../speed/StatusBarNetSpeedView.java          | 329 ++++++++++++++++++
+ 11 files changed, 1067 insertions(+), 2 deletions(-)
+ create mode 100755 frameworks/base/packages/SystemUI/res-keyguard/layout/status_bar_network_speed_group_inner.xml
+ create mode 100755 frameworks/base/packages/SystemUI/res/layout/status_bar_network_speed_group.xml
+ mode change 100644 => 100755 frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconController.java
+ create mode 100755 frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/NetConnectManager.kt
+ create mode 100755 frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/NetworkSpeedView.java
+ create mode 100755 frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/StatusBarNetSpeedView.java
+
+diff --git a/frameworks/base/packages/SystemUI/res-keyguard/layout/status_bar_network_speed_group_inner.xml b/frameworks/base/packages/SystemUI/res-keyguard/layout/status_bar_network_speed_group_inner.xml
+new file mode 100755
+index 0000000000..9837253bb5
+--- /dev/null
++++ b/frameworks/base/packages/SystemUI/res-keyguard/layout/status_bar_network_speed_group_inner.xml
+@@ -0,0 +1,38 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++**
++** Copyright 2022, The Android Open Source Project
++**
++** Licensed under the Apache License, Version 2.0 (the "License");
++** you may not use this file except in compliance with the License.
++** You may obtain a copy of the License at
++**
++**     http://www.apache.org/licenses/LICENSE-2.0
++**
++** Unless required by applicable law or agreed to in writing, software
++** distributed under the License is distributed on an "AS IS" BASIS,
++** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++** See the License for the specific language governing permissions and
++** limitations under the License.
++*/
++-->
++
++<merge
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:systemui="http://schemas.android.com/apk/res-auto" >
++
++    <com.android.keyguard.AlphaOptimizedLinearLayout
++        android:id="@+id/speed_group"
++        android:layout_width="wrap_content"
++        android:layout_height="match_parent"
++        android:gravity="center_vertical"
++        android:orientation="vertical" >
++
++        <com.android.systemui.statusbar.speed.NetworkSpeedView
++            android:id="@+id/speed_view"
++            android:layout_width="wrap_content"
++            android:layout_height="match_parent" />
++
++    </com.android.keyguard.AlphaOptimizedLinearLayout>
++
++</merge>
+diff --git a/frameworks/base/packages/SystemUI/res/layout/status_bar_network_speed_group.xml b/frameworks/base/packages/SystemUI/res/layout/status_bar_network_speed_group.xml
+new file mode 100755
+index 0000000000..fa9b161fc4
+--- /dev/null
++++ b/frameworks/base/packages/SystemUI/res/layout/status_bar_network_speed_group.xml
+@@ -0,0 +1,29 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++**
++** Copyright 2018, The Android Open Source Project
++**
++** Licensed under the Apache License, Version 2.0 (the "License");
++** you may not use this file except in compliance with the License.
++** You may obtain a copy of the License at
++**
++**     http://www.apache.org/licenses/LICENSE-2.0
++**
++** Unless required by applicable law or agreed to in writing, software
++** distributed under the License is distributed on an "AS IS" BASIS,
++** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++** See the License for the specific language governing permissions and
++** limitations under the License.
++*/
++-->
++<com.android.systemui.statusbar.speed.StatusBarNetSpeedView
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/speed_combo"
++    android:layout_width="wrap_content"
++    android:layout_height="match_parent"
++    android:gravity="center_vertical" >
++
++    <include layout="@layout/status_bar_network_speed_group_inner" />
++
++</com.android.systemui.statusbar.speed.StatusBarNetSpeedView>
++
+diff --git a/frameworks/base/packages/SystemUI/res/values/dimens.xml b/frameworks/base/packages/SystemUI/res/values/dimens.xml
+index a0cded3021..28dfde970a 100755
+--- a/frameworks/base/packages/SystemUI/res/values/dimens.xml
++++ b/frameworks/base/packages/SystemUI/res/values/dimens.xml
+@@ -1800,4 +1800,5 @@
+     <!-- Bouncer user switcher margins -->
+     <dimen name="bouncer_user_switcher_view_mode_user_switcher_bottom_margin">0dp</dimen>
+     <dimen name="bouncer_user_switcher_view_mode_view_flipper_bottom_margin">0dp</dimen>
++    <dimen name="view_net_speed_text_size">8sp</dimen>
+ </resources>
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconController.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconController.java
+old mode 100644
+new mode 100755
+index d2c5873916..8149c476f6
+--- a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconController.java
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconController.java
+@@ -17,6 +17,7 @@ package com.android.systemui.statusbar.phone;
+ import static com.android.systemui.statusbar.phone.StatusBarIconHolder.TYPE_ICON;
+ import static com.android.systemui.statusbar.phone.StatusBarIconHolder.TYPE_MOBILE;
+ import static com.android.systemui.statusbar.phone.StatusBarIconHolder.TYPE_MOBILE_NEW;
++import static com.android.systemui.statusbar.phone.StatusBarIconHolder.TYPE_NET_SPEED;
+ import static com.android.systemui.statusbar.phone.StatusBarIconHolder.TYPE_WIFI;
+ import static com.android.systemui.statusbar.phone.StatusBarIconHolder.TYPE_WIFI_NEW;
+ 
+@@ -25,6 +26,7 @@ import android.content.Context;
+ import android.os.Bundle;
+ import android.text.TextUtils;
+ import android.util.ArraySet;
++import android.util.Log;
+ import android.view.Gravity;
+ import android.view.View;
+ import android.view.ViewGroup;
+@@ -43,12 +45,14 @@ import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
+ import com.android.systemui.statusbar.BaseStatusBarFrameLayout;
+ import com.android.systemui.statusbar.StatusBarIconView;
+ import com.android.systemui.statusbar.StatusBarMobileView;
++import com.android.systemui.statusbar.speed.StatusBarNetSpeedView;
+ import com.android.systemui.statusbar.StatusBarWifiView;
+ import com.android.systemui.statusbar.StatusIconDisplayable;
+ import com.android.systemui.statusbar.connectivity.ui.MobileContextProvider;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.CallIndicatorIconState;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.MobileIconState;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.WifiIconState;
++import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.NetSpeedState;
+ import com.android.systemui.statusbar.pipeline.StatusBarPipelineFlags;
+ import com.android.systemui.statusbar.pipeline.mobile.ui.MobileUiAdapter;
+ import com.android.systemui.statusbar.pipeline.mobile.ui.binder.MobileIconsBinder;
+@@ -98,6 +102,8 @@ public interface StatusBarIconController {
+      */
+     void setIcon(String slot, int resourceId, CharSequence contentDescription);
+ 
++    void setNetworkSpeedIcon(String slot, NetSpeedState state);
++
+     /** */
+     void setWifiIcon(String slot, WifiIconState state);
+ 
+@@ -458,6 +464,12 @@ public interface StatusBarIconController {
+                 StatusBarIconHolder holder) {
+             // This is a little hacky, and probably regrettable, but just set `blocked` on any icon
+             // that is in our blocked list, then we'll never see it
++            Log.d("zhoupeng", "addHolder: \n" +
++                    "{ index = " + index + " , " +
++                    "slot = " + slot + " , " +
++                    "blocked = " + blocked + " , " +
++                    "holder = " + holder.toString()
++                    + "}");
+             if (mBlockList.contains(slot)) {
+                 blocked = true;
+             }
+@@ -476,6 +488,10 @@ public interface StatusBarIconController {
+ 
+                 case TYPE_MOBILE_NEW:
+                     return addNewMobileIcon(index, slot, holder.getTag());
++
++                case TYPE_NET_SPEED:
++                    return addNetSpeedIcon(index, slot, holder.getNetSpeedState());
++
+             }
+ 
+             return null;
+@@ -547,6 +563,17 @@ public interface StatusBarIconController {
+             return mobileView;
+         }
+ 
++        private StatusIconDisplayable addNetSpeedIcon(int index, String slot, NetSpeedState netSpeedState) {
++            if (!mStatusBarPipelineFlags.isNetworkSpeedSlot(slot)) {
++                throw new IllegalStateException("Attempting to add a network speed icon while the new "
++                        + "icons are enabled is not supported");
++            }
++            StatusBarNetSpeedView speedView = onCreateStatusBarNetSpeedView(slot);
++            speedView.applyNetSpeedState(netSpeedState);
++            mGroup.addView(speedView, index, onCreateLayoutParams());
++            return speedView;
++        }
++
+         protected StatusIconDisplayable addNewMobileIcon(
+                 int index,
+                 String slot,
+@@ -592,6 +619,11 @@ public interface StatusBarIconController {
+             return view;
+         }
+ 
++        private StatusBarNetSpeedView onCreateStatusBarNetSpeedView(String slot) {
++            StatusBarNetSpeedView speedView = StatusBarNetSpeedView.fromContext(mContext, slot);
++            return speedView;
++        }
++
+         private ModernStatusBarMobileView onCreateModernStatusBarMobileView(
+                 String slot, int subId) {
+             Context mobileContext = mMobileContextProvider.getMobileContextForSub(subId, mContext);
+@@ -657,11 +689,24 @@ public interface StatusBarIconController {
+                 case TYPE_WIFI_NEW:
+                     // Nothing, the new icons update themselves
+                     return;
++                case TYPE_NET_SPEED:
++                    onSetNetSpeedIcon(viewIndex, holder.getNetSpeedState());
++                    return;
+                 default:
+                     break;
+             }
+         }
+ 
++        public void onSetNetSpeedIcon(int viewIndex, NetSpeedState state) {
++            View view = mGroup.getChildAt(viewIndex);
++            if (view instanceof StatusBarNetSpeedView) {
++                ((StatusBarNetSpeedView) view).applyNetSpeedState(state);
++            } else {
++                throw new IllegalStateException("View at " + viewIndex + " must be of type "
++                        + "StatusBarNetSpeedView");
++            }
++        }
++
+         public void onSetWifiIcon(int viewIndex, WifiIconState state) {
+             View view = mGroup.getChildAt(viewIndex);
+             if (view instanceof StatusBarWifiView) {
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconControllerImpl.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconControllerImpl.java
+index b22ffb920d..b59a8e937d 100755
+--- a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconControllerImpl.java
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconControllerImpl.java
+@@ -41,6 +41,7 @@ import com.android.systemui.statusbar.StatusIconDisplayable;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.CallIndicatorIconState;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.MobileIconState;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.WifiIconState;
++import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.NetSpeedState;
+ import com.android.systemui.statusbar.pipeline.StatusBarPipelineFlags;
+ import com.android.systemui.statusbar.policy.ConfigurationController;
+ import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener;
+@@ -200,6 +201,24 @@ public class StatusBarIconControllerImpl implements Tunable,
+         }
+     }
+ 
++    @Override
++    public void setNetworkSpeedIcon(String slot, NetSpeedState state) {
++        if (mStatusBarPipelineFlags.isNetworkSpeedSlot(slot)) {
++            if (state == null) {
++                removeIcon(slot, 0);
++                return;
++            }
++            StatusBarIconHolder holder = mStatusBarIconList.getIconHolder(slot, 0);
++            if (holder == null) {
++                holder = StatusBarIconHolder.fromNetworkSpeedIcon(state);
++                setIcon(slot, holder);
++            } else {
++                holder.setNetSpeedState(state);
++                handleSet(slot, holder);
++            }
++        }
++    }
++
+     @Override
+     public void setWifiIcon(String slot, WifiIconState state) {
+         if (mStatusBarPipelineFlags.useNewWifiIcon()) {
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconHolder.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconHolder.java
+index 833cb93f62..11fa4f7790 100644
+--- a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconHolder.java
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarIconHolder.java
+@@ -26,6 +26,7 @@ import com.android.internal.statusbar.StatusBarIcon;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.CallIndicatorIconState;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.MobileIconState;
+ import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.WifiIconState;
++import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.NetSpeedState;
+ import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.MobileIconViewModel;
+ 
+ import java.lang.annotation.Retention;
+@@ -63,12 +64,15 @@ public class StatusBarIconHolder {
+     @Deprecated
+     public static final int TYPE_WIFI_NEW = 4;
+ 
++    public static final int TYPE_NET_SPEED = 5;
++
+     @IntDef({
+             TYPE_ICON,
+             TYPE_WIFI,
+             TYPE_MOBILE,
+             TYPE_MOBILE_NEW,
+-            TYPE_WIFI_NEW
++            TYPE_WIFI_NEW,
++            TYPE_NET_SPEED
+     })
+     @Retention(RetentionPolicy.SOURCE)
+     @interface IconType {}
+@@ -76,6 +80,7 @@ public class StatusBarIconHolder {
+     private StatusBarIcon mIcon;
+     private WifiIconState mWifiState;
+     private MobileIconState mMobileState;
++    private NetSpeedState mNetSpeedState;
+     private @IconType int mType = TYPE_ICON;
+     private int mTag = 0;
+ 
+@@ -87,6 +92,7 @@ public class StatusBarIconHolder {
+             case TYPE_MOBILE: return "MOBILE_OLD";
+             case TYPE_MOBILE_NEW: return "MOBILE_NEW";
+             case TYPE_WIFI_NEW: return "WIFI_NEW";
++            case TYPE_NET_SPEED: return "NET_SPEED";
+             default: return "UNKNOWN";
+         }
+     }
+@@ -112,6 +118,13 @@ public class StatusBarIconHolder {
+         return holder;
+     }
+ 
++    public static StatusBarIconHolder fromNetworkSpeedIcon(NetSpeedState state) {
++        StatusBarIconHolder holder = new StatusBarIconHolder();
++        holder.mNetSpeedState = state;
++        holder.mType = TYPE_NET_SPEED;
++        return holder;
++    }
++
+     /** */
+     public static StatusBarIconHolder fromWifiIconState(WifiIconState state) {
+         StatusBarIconHolder holder = new StatusBarIconHolder();
+@@ -195,6 +208,14 @@ public class StatusBarIconHolder {
+         mMobileState = state;
+     }
+ 
++    public NetSpeedState getNetSpeedState() {
++        return mNetSpeedState;
++    }
++
++    public void setNetSpeedState(NetSpeedState mNetSpeedState) {
++        this.mNetSpeedState = mNetSpeedState;
++    }
++
+     public boolean isVisible() {
+         switch (mType) {
+             case TYPE_ICON:
+@@ -203,6 +224,8 @@ public class StatusBarIconHolder {
+                 return mWifiState.visible;
+             case TYPE_MOBILE:
+                 return mMobileState.visible;
++            case TYPE_NET_SPEED:
++                return mNetSpeedState.visible;
+             case TYPE_MOBILE_NEW:
+             case TYPE_WIFI_NEW:
+                 // The new pipeline controls visibilities via the view model and view binder, so
+@@ -231,6 +254,10 @@ public class StatusBarIconHolder {
+                 mMobileState.visible = visible;
+                 break;
+ 
++            case TYPE_NET_SPEED:
++                mNetSpeedState.visible = visible;
++                break;
++
+             case TYPE_MOBILE_NEW:
+             case TYPE_WIFI_NEW:
+                 // The new pipeline controls visibilities via the view model and view binder, so
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarSignalPolicy.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarSignalPolicy.java
+index e3925ec386..e731421a88 100755
+--- a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarSignalPolicy.java
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/StatusBarSignalPolicy.java
+@@ -37,12 +37,16 @@ import com.android.systemui.statusbar.connectivity.NetworkController;
+ import com.android.systemui.statusbar.connectivity.SignalCallback;
+ import com.android.systemui.statusbar.connectivity.WifiIndicators;
+ import com.android.systemui.statusbar.policy.SecurityController;
++import com.android.systemui.statusbar.speed.NetConnectManager;
++import com.android.systemui.statusbar.speed.OnNetStateCallback;
+ import com.android.systemui.tuner.TunerService;
+ import com.android.systemui.tuner.TunerService.Tunable;
+ import com.android.systemui.util.CarrierConfigTracker;
+ import com.unisoc.systemui.statusbar.UniStatusBarMobileIconCtrl;
+ 
+ import java.lang.ref.WeakReference;
++import java.math.BigInteger;
++import java.text.DecimalFormat;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Objects;
+@@ -54,13 +58,14 @@ import javax.inject.Inject;
+ /** Controls the signal policies for icons shown in the statusbar. **/
+ @SysUISingleton
+ public class StatusBarSignalPolicy implements SignalCallback,
+-        SecurityController.SecurityControllerCallback, Tunable {
++        SecurityController.SecurityControllerCallback, Tunable, OnNetStateCallback {
+     private static final String TAG = "StatusBarSignalPolicy";
+     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+ 
+     private final String mSlotAirplane;
+     private final String mSlotMobile;
+     private final String mSlotWifi;
++    private final String mSlotNetSpeed;
+     private final String mSlotEthernet;
+     private final String mSlotVpn;
+     private final String mSlotNoCalling;
+@@ -94,6 +99,7 @@ public class StatusBarSignalPolicy implements SignalCallback,
+     private ArrayList<MobileIconState> mMobileStates = new ArrayList<>();
+     private ArrayList<CallIndicatorIconState> mCallIndicatorStates = new ArrayList<>();
+     private WifiIconState mWifiIconState = new WifiIconState();
++    private NetSpeedState mNetSpeedState = new NetSpeedState();
+     private boolean mInitialized;
+ 
+     @Inject
+@@ -113,9 +119,12 @@ public class StatusBarSignalPolicy implements SignalCallback,
+         mSecurityController = securityController;
+         mTunerService = tunerService;
+ 
++        NetConnectManager.INSTANCE.init(mContext);
++
+         mSlotAirplane = mContext.getString(com.android.internal.R.string.status_bar_airplane);
+         mSlotMobile   = mContext.getString(com.android.internal.R.string.status_bar_mobile);
+         mSlotWifi     = mContext.getString(com.android.internal.R.string.status_bar_wifi);
++        mSlotNetSpeed = mContext.getString(com.android.internal.R.string.status_bar_data_connection);
+         mSlotEthernet = mContext.getString(com.android.internal.R.string.status_bar_ethernet);
+         mSlotVpn      = mContext.getString(com.android.internal.R.string.status_bar_vpn);
+         mSlotNoCalling = mContext.getString(com.android.internal.R.string.status_bar_no_calling);
+@@ -140,6 +149,7 @@ public class StatusBarSignalPolicy implements SignalCallback,
+         mTunerService.addTunable(this, StatusBarIconController.ICON_HIDE_LIST);
+         mNetworkController.addCallback(this);
+         mSecurityController.addCallback(this);
++        NetConnectManager.INSTANCE.addNetStateChangeListener(this);
+         mContext.getContentResolver().registerContentObserver(Settings.Global.getUriFor("wlan_plus_on"), false, mObserverWlanPlus);
+     }
+ 
+@@ -147,6 +157,7 @@ public class StatusBarSignalPolicy implements SignalCallback,
+         mTunerService.removeTunable(this);
+         mNetworkController.removeCallback(this);
+         mSecurityController.removeCallback(this);
++        NetConnectManager.INSTANCE.removeNetStateChangeListener(this);
+         mContext.getContentResolver().unregisterContentObserver(mObserverWlanPlus);
+     }
+ 
+@@ -307,6 +318,28 @@ public class StatusBarSignalPolicy implements SignalCallback,
+         }
+     }
+ 
++    private void updateNetSpeedIconWithState(boolean availableNetwork, Long bytes) {
++        NetSpeedState newState = mNetSpeedState.copy();
++        newState.slot = mSlotNetSpeed;
++        newState.visible = availableNetwork;
++        newState.availableNetwork = availableNetwork;
++        newState.speedBytes = bytes;
++        Log.d("zhoupeng", newState.toString());
++        if (newState.speedBytes != mNetSpeedState.speedBytes) {
++            mIconController.setNetworkSpeedIcon(mSlotNetSpeed, newState);
++        }
++        if (newState.visible && newState.availableNetwork) {
++            if (!mNetSpeedState.visible || !mNetSpeedState.availableNetwork) {
++                mIconController.setIconVisibility(mSlotNetSpeed, true);
++            }
++        } else {
++            if (mNetSpeedState.visible || mNetSpeedState.availableNetwork) {
++                mIconController.setIconVisibility(mSlotNetSpeed, false);
++            }
++        }
++        mNetSpeedState = newState;
++    }
++
+     @Override
+     public void setCallIndicator(@NonNull IconState statusIcon, int subId) {
+         if (DEBUG || SYSTEMUI_DEBUG) {
+@@ -564,6 +597,20 @@ public class StatusBarSignalPolicy implements SignalCallback,
+         // Don't care.
+     }
+ 
++    // add by zhoupeng, network state callback
++    @Override
++    public void onAvailableNetwork(boolean available) {
++        updateNetSpeedIconWithState(available, 0L);
++        if (available) {
++            NetConnectManager.INSTANCE.startNetSpeedListener(bytes -> {
++                //Log.d("zhoupeng", "onAvailableNetwork: [SPEED] --> " + speed);
++                updateNetSpeedIconWithState(true, bytes);
++            });
++        } else {
++            NetConnectManager.INSTANCE.stopNetSpeedListener();
++        }
++    }
++
+     /**
+      * Stores the statusbar state for no Calling & SMS.
+      */
+@@ -659,6 +706,45 @@ public class StatusBarSignalPolicy implements SignalCallback,
+         }
+     }
+ 
++    public static class NetSpeedState extends SignalIconState {
++        public long speedBytes;
++        public boolean availableNetwork;
++
++        @Override
++        public boolean equals(Object o) {
++            if (o == null || getClass() != o.getClass()) {
++                return false;
++            }
++            if (!super.equals(o)) {
++                return false;
++            }
++            NetSpeedState other = (NetSpeedState) o;
++            return speedBytes == other.speedBytes && availableNetwork == other.availableNetwork;
++        }
++
++        public void copyTo(NetSpeedState other) {
++            super.copyTo(other);
++            other.speedBytes = speedBytes;
++            other.availableNetwork = availableNetwork;
++        }
++
++        public NetSpeedState copy() {
++            NetSpeedState newState = new NetSpeedState();
++            copyTo(newState);
++            return newState;
++        }
++
++        @Override
++        public int hashCode() {
++            return Objects.hash(super.hashCode(),
++                    speedBytes, availableNetwork);
++        }
++
++        @Override public String toString() {
++            return "NetSpeedState(available=" + availableNetwork + ", speedBytes=" + speedBytes + ")";
++        }
++    }
++
+     public static class WifiIconState extends SignalIconState{
+         public int resId;
+         public boolean airplaneSpacerVisible;
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/StatusBarPipelineFlags.kt b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/StatusBarPipelineFlags.kt
+index 4a684d9f8e..fc5382b022 100644
+--- a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/StatusBarPipelineFlags.kt
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/pipeline/StatusBarPipelineFlags.kt
+@@ -17,6 +17,7 @@
+ package com.android.systemui.statusbar.pipeline
+ 
+ import android.content.Context
++import android.text.TextUtils
+ import com.android.systemui.dagger.SysUISingleton
+ import com.android.systemui.flags.FeatureFlags
+ import com.android.systemui.flags.Flags
+@@ -32,6 +33,11 @@ constructor(
+ ) {
+     private val mobileSlot = context.getString(com.android.internal.R.string.status_bar_mobile)
+     private val wifiSlot = context.getString(com.android.internal.R.string.status_bar_wifi)
++    private val netSpeed = context.getString(com.android.internal.R.string.status_bar_data_connection)
++
++    fun useNetworkSpeedIcons(): Boolean = true
++
++    fun isNetworkSpeedSlot(slotName: String): Boolean = useNetworkSpeedIcons() and TextUtils.equals(netSpeed, slotName)
+ 
+     /** True if we should display the mobile icons using the new status bar data pipeline. */
+     fun useNewMobileIcons(): Boolean = featureFlags.isEnabled(Flags.NEW_STATUS_BAR_MOBILE_ICONS)
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/NetConnectManager.kt b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/NetConnectManager.kt
+new file mode 100755
+index 0000000000..ff6c4ea3a8
+--- /dev/null
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/NetConnectManager.kt
+@@ -0,0 +1,199 @@
++package com.android.systemui.statusbar.speed
++
++import android.content.Context
++import android.net.ConnectivityManager
++import android.net.Network
++import android.net.NetworkCapabilities
++import android.net.TrafficStats
++import android.os.Build
++import android.os.Handler
++import android.os.Looper
++import androidx.annotation.RequiresApi
++import java.math.BigInteger
++import java.util.Timer
++import java.util.TimerTask
++import java.util.concurrent.atomic.AtomicBoolean
++import java.util.concurrent.atomic.AtomicLong
++
++sealed class ConnectType(val value: Int) {
++    object MOBILE: ConnectType(0)
++    object WIFI: ConnectType(1)
++    object NONE: ConnectType(-1)
++}
++
++interface OnNetStateCallback {
++    fun onAvailableNetwork(available: Boolean)
++}
++
++interface OnNetTypeCallback {
++    fun onNetTypeCallback(type: ConnectType)
++}
++
++interface OnSpeedCallback {
++    fun onNetSpeedBytes(bytes: Long)
++}
++
++object NetConnectManager {
++    private var mConnectivityManager: ConnectivityManager? = null
++    private val mainHandler = Handler(Looper.getMainLooper())
++    private val mNetTypeListener = mutableListOf<OnNetTypeCallback>()
++    private val mNetStateListener = mutableListOf<OnNetStateCallback>()
++    private var mCurrentConnectType: ConnectType? = null
++    private var mIsNetAvailable: Boolean? = null
++    private val mHistoryBytes: AtomicLong = AtomicLong(0)
++    private val mLastTimestamp: AtomicLong = AtomicLong(0)
++    private val isRunningSpeedTask: AtomicBoolean = AtomicBoolean(false)
++    private val SECOND: BigInteger = BigInteger.valueOf(1000.toLong())
++    private var timer: Timer? = null
++    private var mSpeedTask: TimerTask? = null
++
++    @RequiresApi(Build.VERSION_CODES.N)
++    private fun calculateNetSpeed(): Long {
++        val totalRxBytes = TrafficStats.getTotalRxBytes()
++        val millis = System.currentTimeMillis()
++        return if (mHistoryBytes.compareAndSet(0, totalRxBytes)) {
++            mLastTimestamp.lazySet(millis)
++            0
++        } else {
++            val history = mHistoryBytes.getAndUpdate { totalRxBytes }
++            val lastMillis = mLastTimestamp.getAndSet(millis)
++            calculateNetSpeedBytes(
++                BigInteger.valueOf(totalRxBytes),
++                BigInteger.valueOf(history),
++                BigInteger.valueOf(millis),
++                BigInteger.valueOf(lastMillis))
++        }
++    }
++
++    private fun calculateNetSpeedBytes(
++        nowRxBytes: BigInteger,
++        history: BigInteger,
++        nowMillis: BigInteger,
++        lastMillis: BigInteger
++    ): Long {
++        val rxBytes = nowRxBytes.subtract(history)
++        val millis = nowMillis.subtract(lastMillis)
++        return rxBytes.divide(millis).multiply(SECOND).longValueExact()
++    }
++
++    @RequiresApi(Build.VERSION_CODES.N)
++    fun init(context: Context) {
++        mConnectivityManager = context.getSystemService(ConnectivityManager::class.java)
++        mConnectivityManager?.registerDefaultNetworkCallback(DefaultNetConnectCallback())
++    }
++
++    fun addNetTypeChangeListener(listener: OnNetTypeCallback) {
++        mNetTypeListener.add(listener)
++    }
++
++    fun removeNetTypeChangeListener(listener: OnNetTypeCallback) {
++        mNetTypeListener.remove(listener)
++    }
++
++    fun addNetStateChangeListener(listener: OnNetStateCallback) {
++        mNetStateListener.add(listener)
++    }
++
++    fun removeNetStateChangeListener(listener: OnNetStateCallback) {
++        mNetStateListener.remove(listener)
++    }
++
++    @RequiresApi(Build.VERSION_CODES.N)
++    fun startNetSpeedListener(listener: OnSpeedCallback) {
++        if (isRunningSpeedTask.compareAndSet(false, true)) {
++            timer = Timer()
++            mSpeedTask = object : TimerTask() {
++                override fun run() {
++                    val netSpeed = calculateNetSpeed()
++                    mainHandler.post {
++                        listener.onNetSpeedBytes(netSpeed)
++                    }
++                }
++            }
++            timer?.run { schedule(mSpeedTask, 0.toLong(), SECOND.longValueExact()) }
++        }
++    }
++
++    fun stopNetSpeedListener() {
++        if (isRunningSpeedTask.compareAndSet(true, false)) {
++            mSpeedTask?.cancel()
++            timer?.cancel()
++            mSpeedTask = null
++            timer = null
++        }
++    }
++
++    @RequiresApi(Build.VERSION_CODES.M)
++    fun getConnectType(): ConnectType {
++        if (mConnectivityManager == null) {
++            throw UninitializedPropertyAccessException("请先调用init()初始化")
++        }
++        return mCurrentConnectType ?: mConnectivityManager?.getNetworkCapabilities(
++            mConnectivityManager?.activeNetwork
++        ).let {
++            return if (it?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) {
++                ConnectType.MOBILE
++            } else if (it?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
++                ConnectType.WIFI
++            } else {
++                ConnectType.NONE
++            }
++        }
++    }
++
++    @RequiresApi(Build.VERSION_CODES.M)
++    fun isConnected(): Boolean {
++        if (mConnectivityManager == null) {
++            throw UninitializedPropertyAccessException("请先调用init()初始化")
++        }
++        return (mIsNetAvailable ?: mConnectivityManager
++            ?.getNetworkCapabilities(mConnectivityManager?.activeNetwork)
++            ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) == true
++    }
++
++    private class DefaultNetConnectCallback: ConnectivityManager.NetworkCallback() {
++        override fun onLost(network: Network) {
++            super.onLost(network)
++            mCurrentConnectType = ConnectType.NONE
++            mainHandler.postDelayed({
++                if (mCurrentConnectType == ConnectType.NONE && mIsNetAvailable == true) {
++                    mIsNetAvailable = false
++                    mNetStateListener.forEach { it.onAvailableNetwork(false) }
++                    mNetTypeListener.forEach { it.onNetTypeCallback(ConnectType.NONE) }
++                }
++            }, 500)
++        }
++
++        @RequiresApi(Build.VERSION_CODES.M)
++        override fun onCapabilitiesChanged(
++            network: Network,
++            networkCapabilities: NetworkCapabilities
++        ) {
++            super.onCapabilitiesChanged(network, networkCapabilities)
++            mainHandler.post {
++                val isConnected =
++                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
++                val isCellular =
++                    networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
++                val isWifi =
++                    networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
++
++                if (isConnected) {
++                    val networkType =
++                        if (isCellular) ConnectType.MOBILE else if (isWifi) ConnectType.WIFI else ConnectType.NONE
++
++                    if (mIsNetAvailable == null || mIsNetAvailable == false) {
++                        mIsNetAvailable = true
++                        mNetStateListener.forEach { it.onAvailableNetwork(true) }
++                    }
++
++                    if (mCurrentConnectType != networkType) {
++                        mCurrentConnectType = networkType
++                        mNetTypeListener.forEach { it.onNetTypeCallback(networkType) }
++                    }
++                }
++            }
++        }
++    }
++
++}
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/NetworkSpeedView.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/NetworkSpeedView.java
+new file mode 100755
+index 0000000000..b8931edce9
+--- /dev/null
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/NetworkSpeedView.java
+@@ -0,0 +1,286 @@
++package com.android.systemui.statusbar.speed;
++
++import android.content.Context;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.graphics.Paint;
++import android.graphics.PixelFormat;
++import android.graphics.PorterDuff;
++import android.graphics.Rect;
++import android.graphics.Typeface;
++import android.util.AttributeSet;
++import android.util.Log;
++import android.view.SurfaceHolder;
++import android.view.SurfaceView;
++
++import androidx.annotation.NonNull;
++
++import com.android.systemui.R;
++
++import java.math.BigDecimal;
++import java.math.BigInteger;
++import java.util.concurrent.LinkedBlockingQueue;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicLong;
++
++public class NetworkSpeedView extends SurfaceView implements SurfaceHolder.Callback {
++
++    private static final String TAG = NetworkSpeedView.class.getSimpleName();
++    private static final boolean DBG = true;
++    private static final String UNIT_BYTE = "B/s";
++    private static final String UNIT_KB = "K/s";
++    private static final String UNIT_MB = "M/s";
++    private static final String UNIT_GB = "G/s";
++    private static final BigInteger COMPARE_UNIT = BigInteger.valueOf(500L);
++    private static final BigInteger DIVIDE_UNIT = BigInteger.valueOf(1000L);
++    private final AtomicBoolean isDrawing = new AtomicBoolean(false);
++    private final AtomicLong mLatestBytes = new AtomicLong(0L);
++    private final SurfaceHolder mHolder;
++    private final Paint mTextPaint;
++    private final Queue<Long> mQueue;
++    private int mTextColor = Color.BLACK;
++
++    public NetworkSpeedView(Context context) {
++        this(context, null);
++    }
++
++    public NetworkSpeedView(Context context, AttributeSet attrs) {
++        this(context, attrs, 0);
++    }
++
++    public NetworkSpeedView(Context context, AttributeSet attrs, int defStyleAttr) {
++        this(context, attrs, defStyleAttr, 0);
++    }
++
++    public NetworkSpeedView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
++        super(context, attrs, defStyleAttr, defStyleRes);
++        mHolder = getHolder();
++        mHolder.addCallback(this);
++        mQueue = new Queue<>();
++        isDrawing.lazySet(false);
++        // 画笔
++        mTextPaint = new Paint();
++        mTextPaint.setColor(mTextColor);
++        mTextPaint.setTextSize(context.getResources().getDimensionPixelSize(R.dimen.view_net_speed_text_size));
++        mTextPaint.setTextAlign(Paint.Align.LEFT);
++        mTextPaint.setTypeface(Typeface.defaultFromStyle(Typeface.BOLD));
++        mTextPaint.setAntiAlias(true);
++
++        setZOrderOnTop(true);
++        mHolder.setFormat(PixelFormat.TRANSPARENT);
++    }
++
++    /**
++     * 更改颜色
++     * @param color 颜色值
++     */
++    public void setTextColor(int color) {
++        this.mTextColor = color;
++        if (!mQueue.check()) {
++            mQueue.put(mLatestBytes.get());
++        }
++        if (DBG) Log.d(TAG, "setTextColor: " + color);
++    }
++
++    /**
++     * 速率更新
++     */
++    public void speed(long bytes) {
++        if (isDrawing.get()) {
++            mQueue.put(bytes);
++        }
++    }
++
++    @Override
++    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
++        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
++        Rect bounds = measureTextBound(mTextPaint);
++        setMeasuredDimension(
++                measureSpec(widthMeasureSpec, bounds.width() + getPaddingLeft() + getPaddingRight()),
++                measureSpec(heightMeasureSpec, bounds.height() + getPaddingTop() + getPaddingBottom())
++        );
++    }
++
++    private static Rect measureTextBound(Paint paint) {
++        Rect bound = new Rect(0, 0, 0, 0);
++        if (paint != null) {
++            String text = "555.5";
++            paint.getTextBounds(text, 0 , text.length(), bound);
++        }
++        return bound;
++    }
++
++    private static int measureSpec(int spec, int defSize) {
++        int mode = MeasureSpec.getMode(spec);
++        int size = MeasureSpec.getSize(spec);
++        if (MeasureSpec.EXACTLY == mode) return size;
++        else if (MeasureSpec.AT_MOST != mode) return defSize;
++        else return Math.min(defSize, size);
++    }
++
++    @Override
++    public void surfaceCreated(@NonNull SurfaceHolder holder) {
++        if (isDrawing.compareAndSet(false, true)) {
++            if (DBG) Log.d(TAG, "surfaceCreated: ");
++            new Thread(this::onSurfaceDrawing).start();
++            speed(0L);
++        }
++    }
++
++    @Override
++    public void surfaceChanged(@NonNull SurfaceHolder holder, int format, int width, int height) {
++
++    }
++
++    @Override
++    public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
++        if (isDrawing.compareAndSet(true, false)) {
++            if (DBG) Log.d(TAG, "surfaceDestroyed: ");
++            mQueue.clear();
++            mLatestBytes.lazySet(0L);
++        }
++    }
++
++    private void onSurfaceDrawing() {
++        while (isDrawing.get()) {
++
++            if (!mQueue.check()) {
++                continue;
++            }
++
++            Canvas canvas = null;
++            try {
++                canvas = mHolder.lockCanvas();
++                if (canvas != null) {
++                    /** draw text */
++                    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
++                    onDrawText(canvas, mQueue.take());
++                }
++            } finally {
++                if (canvas != null) {
++                    mHolder.unlockCanvasAndPost(canvas);
++                }
++            }
++        }
++    }
++
++    private void onDrawText(Canvas canvas, long bytes) {
++        mLatestBytes.lazySet(bytes);
++        String[] speedAndUnit = formatSpeedAndUnit(bytes);
++        String value = speedAndUnit[0];
++        String unit = speedAndUnit[1];
++        mTextPaint.setColor(mTextColor);
++        Paint.FontMetrics metrics = mTextPaint.getFontMetrics();
++        float measure = mTextPaint.measureText(value);
++        float baseline = (getHeight() >> 1) - metrics.descent / 2;
++        canvas.drawText(value, (getWidth() - measure) / 2, baseline, mTextPaint);
++        measure = mTextPaint.measureText(unit);
++        baseline = (getHeight() >> 1) - metrics.ascent - metrics.descent / 2;
++        canvas.drawText(unit, (getWidth() - measure) / 2, baseline, mTextPaint);
++    }
++
++    private static String[] formatSpeedAndUnit(long bytes) {
++        final String[] result = new String[2];
++        BigInteger value = BigInteger.valueOf(bytes);
++        BigInteger remainder = BigInteger.ZERO;
++        String unit = UNIT_BYTE;
++        if (value.compareTo(COMPARE_UNIT) > 0) {
++            BigInteger[] integers = value.divideAndRemainder(DIVIDE_UNIT);
++            value = integers[0];
++            remainder = integers[1];
++            unit = UNIT_KB;
++            if (DBG) Log.d(TAG, "formatSpeedAndUnit: [KB/s] " + value.longValue() + " . " + remainder.longValue());
++
++            if (value.compareTo(COMPARE_UNIT) > 0) {
++                integers = value.divideAndRemainder(DIVIDE_UNIT);
++                value = integers[0];
++                remainder = integers[1];
++                unit = UNIT_MB;
++                if (DBG) Log.d(TAG, "formatSpeedAndUnit: [MB/s] " + value.longValue() + " . " + remainder.longValue());
++
++                if (value.compareTo(COMPARE_UNIT) > 0) {
++                    integers = value.divideAndRemainder(DIVIDE_UNIT);
++                    value = integers[0];
++                    remainder = integers[1];
++                    unit = UNIT_GB;
++                    if (DBG) Log.d(TAG, "formatSpeedAndUnit: [GB/s] " + value.longValue() + " . " + remainder.longValue());
++                }
++            }
++        }
++        result[0] = value.toString();
++        if (remainder.compareTo(BigInteger.ZERO) > 0) {
++            try {
++                float decimal = formatDecimal(remainder);
++                if (decimal > 0) {
++                    if (decimal % 1.0 > 0) {
++                        result[0] = String.valueOf(value.intValue() + decimal);
++                    } else {
++                        result[0] = String.valueOf(value.intValue() + 1);
++                    }
++                }
++            } catch (Exception e) {
++                if (DBG) Log.e(TAG, "formatSpeedAndUnit: [BigDecimal] ", e);
++            }
++        }
++        result[1] = unit;
++        if (DBG) Log.d(TAG, "formatSpeedAndUnit: [RESULT] >>> " + result[0] + " - " + result[1]);
++        return result;
++    }
++
++    private static float formatDecimal(BigInteger integer) throws Exception {
++        if (DBG) Log.d(TAG, "formatDecimal: [BEFORE] = " + integer.toString());
++        BigDecimal decimal = new BigDecimal(integer);
++        BigDecimal round = decimal.divide(new BigDecimal(DIVIDE_UNIT), 1, BigDecimal.ROUND_HALF_UP);
++        if (DBG) Log.d(TAG, "formatDecimal: [round] >>> " + round);
++        return round.floatValue();
++    }
++
++    private static class Queue<T> {
++
++        private final LinkedBlockingQueue<T> queue;
++
++        public Queue() {
++            this(50);
++        }
++
++        public Queue(int capacity) {
++            queue = new LinkedBlockingQueue<>(capacity);
++        }
++
++        void put(T node) {
++            try {
++                queue.put(node);
++                if (DBG) Log.d(TAG, "put: " + node);
++            } catch (InterruptedException e) {
++                if (DBG) Log.e(TAG, "put: " + node, e);
++            }
++        }
++
++        T take() {
++            T node = null;
++            try {
++                node = queue.take();
++                if (DBG) Log.d(TAG, "take: " + node);
++            } catch (InterruptedException e) {
++                if (DBG) Log.e(TAG, "take: ", e);
++            }
++            return node;
++        }
++
++        int size() {
++            return queue.size();
++        }
++
++        boolean check() {
++            return queue.peek() != null;
++        }
++
++        void clear() {
++            if (size() > 0) {
++                queue.clear();
++            }
++        }
++
++    }
++
++}
+diff --git a/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/StatusBarNetSpeedView.java b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/StatusBarNetSpeedView.java
+new file mode 100755
+index 0000000000..f848f1b196
+--- /dev/null
++++ b/frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/speed/StatusBarNetSpeedView.java
+@@ -0,0 +1,329 @@
++/*
++ * Copyright (C) 2018 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.systemui.statusbar.speed;
++
++import static com.android.systemui.plugins.DarkIconDispatcher.getTint;
++import static com.android.systemui.plugins.DarkIconDispatcher.isInAreas;
++import static com.android.systemui.statusbar.StatusBarIconView.STATE_DOT;
++import static com.android.systemui.statusbar.StatusBarIconView.STATE_HIDDEN;
++import static com.android.systemui.statusbar.StatusBarIconView.STATE_ICON;
++
++import android.content.Context;
++import android.graphics.Rect;
++import android.util.AttributeSet;
++import android.view.LayoutInflater;
++import android.view.View;
++import android.widget.LinearLayout;
++
++import com.android.internal.annotations.VisibleForTesting;
++import com.android.settingslib.graph.SignalDrawable;
++import com.android.systemui.DualToneHandler;
++import com.android.systemui.R;
++import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
++import com.android.systemui.statusbar.BaseStatusBarFrameLayout;
++import com.android.systemui.statusbar.StatusBarIconView;
++import com.android.systemui.statusbar.StatusIconDisplayable;
++import com.android.systemui.statusbar.phone.StatusBarIconController;
++import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.NetSpeedState;
++import com.unisoc.systemui.statusbar.UniStatusBarMobileIconCtrl;
++
++import java.util.ArrayList;
++
++/**
++ * View group for the net speed icon in the status bar
++ */
++public class StatusBarNetSpeedView extends BaseStatusBarFrameLayout implements DarkReceiver,
++        StatusIconDisplayable {
++    private static final String TAG = "StatusBarNetSpeedView";
++
++    /// The main icon view
++    private LinearLayout mSpeedGroup;
++    private String mSlot;
++    private NetSpeedState mState;
++    private NetworkSpeedView mSpeed;
++    @StatusBarIconView.VisibleState
++    private int mVisibleState = STATE_HIDDEN;
++    private DualToneHandler mDualToneHandler;
++    private boolean mForceHidden;
++    private boolean mBlocked;
++    // Unisoc: hook interface
++    // Unisoc: AR.254.0164.1200.4210/AR.254.0165.0670.4217 to display VoLTE or VoWiFi icon
++
++    /**
++     * Designated constructor
++     *
++     * This view is special, in that it is the only view in SystemUI that allows for a configuration
++     * override on a MCC/MNC-basis. This means that for every mobile view inflated, we have to
++     * construct a context with that override, since the resource system doesn't have a way to
++     * handle this for us.
++     *
++     * @param context A context with resources configured by MCC/MNC
++     * @param slot The string key defining which slot this icon refers to. Always "mobile" for the
++     *             mobile icon
++     */
++    public static StatusBarNetSpeedView fromContext(
++            Context context,
++            String slot,
++            boolean blocked
++    ) {
++        LayoutInflater inflater = LayoutInflater.from(context);
++        StatusBarNetSpeedView v = (StatusBarNetSpeedView)
++                inflater.inflate(R.layout.status_bar_network_speed_group, null);
++        /* @} */
++        v.setBlocked(blocked);
++        v.setSlot(slot);
++        v.init();
++        v.setVisibleState(STATE_ICON);
++        return v;
++    }
++
++    public static StatusBarNetSpeedView fromContext(
++            Context context,
++            String slot
++    ) {
++        return fromContext(context, slot, false);
++    }
++
++    private void setBlocked(boolean blocked) {
++        mBlocked = blocked;
++    }
++
++    public StatusBarNetSpeedView(Context context) {
++        super(context);
++    }
++
++    public StatusBarNetSpeedView(Context context, AttributeSet attrs) {
++        super(context, attrs);
++    }
++
++    public StatusBarNetSpeedView(Context context, AttributeSet attrs, int defStyleAttr) {
++        super(context, attrs, defStyleAttr);
++    }
++
++    @Override
++    public void getDrawingRect(Rect outRect) {
++        super.getDrawingRect(outRect);
++        float translationX = getTranslationX();
++        float translationY = getTranslationY();
++        outRect.left += translationX;
++        outRect.right += translationX;
++        outRect.top += translationY;
++        outRect.bottom += translationY;
++    }
++
++    private void init() {
++        mDualToneHandler = new DualToneHandler(getContext());
++        mSpeedGroup = findViewById(R.id.speed_group);
++        mSpeed = findViewById(R.id.speed_view);
++    }
++
++    public void applyNetSpeedState(NetSpeedState state) {
++        boolean requestLayout = false;
++        if (state == null) {
++            requestLayout = getVisibility() != View.GONE;
++            setVisibility(View.GONE);
++            mState = null;
++        } else if (mState == null) {
++            requestLayout = true;
++            mState = state.copy();
++            initViewState();
++        } else /*if (!mState.equals(state))*/ {
++            requestLayout = updateState(state.copy());
++        }
++
++        if (requestLayout) {
++            requestLayout();
++        }
++    }
++
++    private void initViewState() {
++        setContentDescription(mState.contentDescription);
++        mSpeed.speed(mState.speedBytes);
++        if (!mState.visible || mForceHidden || mBlocked) {
++            //mSpeedGroup.setVisibility(View.GONE);
++            goneView(mSpeed, mSpeedGroup);
++        } else {
++            //mSpeedGroup.setVisibility(View.VISIBLE);
++            visibleView(mSpeedGroup, mSpeed);
++        }
++    }
++
++    private static void visibleView(View... views) {
++        if (views != null) {
++            for (View view : views) {
++                if (view == null) continue;
++                view.setVisibility(VISIBLE);
++            }
++        }
++    }
++
++    private static void invisibleView(View... views) {
++        if (views != null) {
++            for (View view : views) {
++                if (view == null) continue;
++                view.setVisibility(INVISIBLE);
++            }
++        }
++    }
++
++    private static void goneView(View... views) {
++        if (views != null) {
++            for (View view : views) {
++                if (view == null) continue;
++                view.setVisibility(GONE);
++            }
++        }
++    }
++
++    private boolean updateState(NetSpeedState state) {
++        boolean needsLayout = false;
++
++        setContentDescription(state.contentDescription);
++        int newVisibility = state.visible && !mForceHidden && !mBlocked ? View.VISIBLE : View.GONE;
++        if (newVisibility != mSpeedGroup.getVisibility() && STATE_ICON == mVisibleState) {
++            if (newVisibility == VISIBLE) {
++                visibleView(mSpeedGroup, mSpeed);
++            } else {
++                goneView(mSpeed, mSpeedGroup);
++            }
++            needsLayout = true;
++        }
++
++        mSpeed.speed(mState.speedBytes);
++
++        mState = state;
++        return needsLayout;
++    }
++
++    @Override
++    public void onDarkChanged(ArrayList<Rect> areas, float darkIntensity, int tint) {
++//        float intensity = isInAreas(areas, this) ? darkIntensity : 0;
++//        mMobileDrawable.setTintList(
++//                ColorStateList.valueOf(mDualToneHandler.getSingleColor(intensity)));
++//        ColorStateList color = ColorStateList.valueOf(getTint(areas, this, tint));
++//        mIn.setImageTintList(color);
++//        mOut.setImageTintList(color);
++//        mUnit.setImageTintList(color);
++//        mMobileRoaming.setImageTintList(color);
++//        /* Unisoc: AR.254.0164.1200.4210/AR.254.0165.0670.4217
++//         * method: hook interface @{ */
++//        mStatusBarMobileIconCtrl.setImageTintList(color, mSpeed, mMobileIms);
++//        /* @} */
++//        mDotView.setDecorColor(tint);
++//        mDotView.setIconColor(tint, false);
++
++        float intensity = isInAreas(areas, this) ? darkIntensity : 0;
++        //ColorStateList colorStateList = ColorStateList.valueOf(mDualToneHandler.getSingleColor(intensity));
++        //ColorStateList color = ColorStateList.valueOf(getTint(areas, this, tint));
++        //mSpeed.setTextColor(colorStateList.getDefaultColor());
++        mSpeed.setTextColor(mDualToneHandler.getSingleColor(intensity));
++    }
++
++    @Override
++    public String getSlot() {
++        return mSlot;
++    }
++
++    public void setSlot(String slot) {
++        mSlot = slot;
++    }
++
++    @Override
++    public void setStaticDrawableColor(int color) {
++//        ColorStateList list = ColorStateList.valueOf(color);
++//        mMobileDrawable.setTintList(list);
++//        mIn.setImageTintList(list);
++//        mOut.setImageTintList(list);
++//        mUnit.setImageTintList(list);
++//        mMobileRoaming.setImageTintList(list);
++//        /* Unisoc: AR.254.0164.1200.4210/AR.254.0165.0670.4217
++//         * method: hook interface @{ */
++//        mStatusBarMobileIconCtrl.setImageTintList(list, mSpeed, mMobileIms);
++//        /* @} */
++//        mDotView.setDecorColor(color);
++//        ColorStateList list = ColorStateList.valueOf(color);
++//        mSpeed.setTextColor(list);
++        mSpeed.setTextColor(color);
++    }
++
++    @Override
++    public void setDecorColor(int color) {
++//        mDotView.setDecorColor(color);
++    }
++
++    @Override
++    public boolean isIconVisible() {
++        return mState.visible && !mForceHidden && !mBlocked;
++    }
++
++    @Override
++    public void setVisibleState(@StatusBarIconView.VisibleState int state, boolean animate) {
++        if (state == mVisibleState) {
++            return;
++        }
++
++        mVisibleState = state;
++        switch (state) {
++            case STATE_ICON:
++                //mSpeedGroup.setVisibility(View.VISIBLE);
++                visibleView(mSpeedGroup, mSpeed);
++                break;
++            case STATE_DOT:
++                //mSpeedGroup.setVisibility(View.INVISIBLE);
++                invisibleView(mSpeed, mSpeedGroup);
++                break;
++            case STATE_HIDDEN:
++            default:
++                //mSpeedGroup.setVisibility(View.INVISIBLE);
++                goneView(mSpeed, mSpeedGroup);
++                break;
++        }
++    }
++
++    /**
++     * Forces the state to be hidden (views will be GONE) and if necessary updates the layout.
++     *
++     * Makes sure that the {@link StatusBarIconController} cannot make it visible while this flag
++     * is enabled.
++     * @param forceHidden {@code true} if the icon should be GONE in its view regardless of its
++     *                                state.
++     *               {@code false} if the icon should show as determined by its controller.
++     */
++    public void forceHidden(boolean forceHidden) {
++        if (mForceHidden != forceHidden) {
++            mForceHidden = forceHidden;
++            updateState(mState);
++            requestLayout();
++        }
++    }
++
++    @Override
++    @StatusBarIconView.VisibleState
++    public int getVisibleState() {
++        return mVisibleState;
++    }
++
++    @VisibleForTesting
++    public NetSpeedState getState() {
++        return mState;
++    }
++
++    @Override
++    public String toString() {
++        return "StatusBarNetSpeedView(slot=" + mSlot + " state=" + mState + ")";
++    }
++}
+-- 
+2.17.1
+
